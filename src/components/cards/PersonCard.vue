@@ -1,10 +1,10 @@
 <script lang="ts" setup>
 import personIcon from '@images/misc/person-icon.png'
-import type { TmdbPerson } from '@/api/types'
+import type { Person } from '@/api/types'
 import router from '@/router'
 
 const personProps = defineProps({
-  person: Object as PropType<TmdbPerson>,
+  person: Object as PropType<Person>,
   width: String,
   height: String,
 })
@@ -17,26 +17,54 @@ const isImageLoaded = ref(false)
 
 // 人物图片地址
 function getPersonImage() {
-  if (!personInfo.value?.profile_path)
+  if (personProps.person?.source === 'themoviedb') {
+    if (!personInfo.value?.profile_path) return personIcon
+    return `https://image.tmdb.org/t/p/w600_and_h900_bestv2${personInfo.value?.profile_path}`
+  } else if (personProps.person?.source === 'douban') {
+    if (!personInfo.value?.avatar) return personIcon
+    if (typeof personInfo.value?.avatar === 'object') {
+      return personInfo.value?.avatar?.normal
+    } else {
+      return personInfo.value?.avatar
+    }
+  } else if (personProps.person?.source === 'bangumi') {
+    if (!personInfo.value?.images) return personIcon
+    return personInfo.value?.images?.medium
+  } else {
     return personIcon
-  return `https://image.tmdb.org/t/p/w600_and_h900_bestv2${personInfo.value?.profile_path}`
+  }
+}
+
+// 人物姓名
+function getPersonName() {
+  return personInfo.value?.name
+}
+
+// 人物角色
+function getPersonCharacter() {
+  if (personProps.person?.source === 'bangumi') {
+    if (!personInfo.value?.career) return ''
+    return personInfo.value?.career.join('、')
+  } else {
+    return personInfo.value?.character
+  }
 }
 
 // 人物详情
 function goPersonDetail() {
-  if (!personInfo.value?.id)
-    return
+  if (!personInfo.value?.id) return
   router.push({
     path: '/person',
     query: {
       personid: personInfo.value?.id,
+      source: personInfo.value?.source,
     },
   })
 }
 </script>
 
 <template>
-  <VHover v-bind="personProps">
+  <VHover>
     <template #default="hover">
       <VCard
         v-bind="hover.props"
@@ -49,9 +77,9 @@ function goPersonDetail() {
         @click.stop="goPersonDetail"
       >
         <div
-          class="person-card relative transform-gpu cursor-pointer rounded shadow ring-1 transition duration-150 ease-in-out scale-100 ring-gray-700"
+          class="person-card relative transform-gpu cursor-pointer rounded shadow transition duration-150 ease-in-out scale-100 ring-gray-700"
         >
-          <div style="padding-bottom: 150%;">
+          <div style="padding-block-end: 150%">
             <div class="absolute inset-0 flex h-full w-full flex-col items-center p-2">
               <div class="relative mt-2 mb-4 flex h-1/2 w-full justify-center">
                 <VAvatar
@@ -60,19 +88,17 @@ function goPersonDetail() {
                     'ring-1 ring-gray-700': isImageLoaded,
                   }"
                 >
-                  <VImg
-                    v-img
-                    :src="getPersonImage()"
-                    cover
-                    @load="isImageLoaded = true"
-                  />
+                  <VImg :src="getPersonImage()" cover @load="isImageLoaded = true" />
                 </VAvatar>
               </div>
               <div class="w-full truncate text-center font-bold">
-                {{ personInfo?.name }}
+                {{ getPersonName() }}
               </div>
-              <div class="overflow-hidden whitespace-normal text-center text-sm" style=" display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical;-webkit-line-clamp: 2;">
-                {{ personInfo?.character }}
+              <div
+                class="overflow-hidden whitespace-normal text-center text-sm"
+                style="display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2"
+              >
+                {{ getPersonCharacter() }}
               </div>
               <div class="absolute bottom-0 left-0 right-0 h-12 rounded-b" />
             </div>

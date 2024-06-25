@@ -5,6 +5,13 @@ import type { Context } from '@/api/types'
 import store from '@/store'
 import TorrentCardListView from '@/views/discover/TorrentCardListView.vue'
 import TorrentRowListView from '@/views/discover/TorrentRowListView.vue'
+import { useDisplay } from 'vuetify'
+
+// APP
+const display = useDisplay()
+const appMode = computed(() => {
+  return localStorage.getItem('MP_APPMODE') != '0' && display.mdAndDown.value
+})
 
 // 路由参数
 const route = useRoute()
@@ -17,6 +24,9 @@ const type = route.query?.type?.toString() ?? ''
 
 // 搜索字段
 const area = route.query?.area?.toString() ?? ''
+
+// 搜索季
+const season = route.query?.season?.toString() ?? ''
 
 // 视图类型，从localStorage中读取
 const viewType = ref<string>(localStorage.getItem('MPTorrentsViewType') ?? 'card')
@@ -36,6 +46,12 @@ const progressValue = ref(0)
 // 加载进度SSE
 const progressEventSource = ref<EventSource>()
 
+// 错误标题
+const errorTitle = ref('没有数据')
+
+// 错误描述
+const errorDescription = ref('未搜索到任何资源')
+
 // 使用SSE监听加载进度
 function startLoadingProgress() {
   progressText.value = '正在搜索，请稍候...'
@@ -45,7 +61,7 @@ function startLoadingProgress() {
   progressEventSource.value = new EventSource(
     `${import.meta.env.VITE_API_BASE_URL}system/progress/search?token=${token}`,
   )
-  progressEventSource.value.onmessage = (event) => {
+  progressEventSource.value.onmessage = event => {
     const progress = JSON.parse(event.data)
     if (progress) {
       progressText.value = progress.text
@@ -56,7 +72,7 @@ function startLoadingProgress() {
 
 // 停止监听加载进度
 function stopLoadingProgress() {
-  progressEventSource.value?.close()
+  if (progressEventSource.value) progressEventSource.value?.close()
 }
 
 // 设置视图类型
@@ -71,28 +87,38 @@ async function fetchData() {
     if (!keyword) {
       // 查询上次搜索结果
       dataList.value = await api.get('search/last')
-    }
-    else {
+    } else {
       startLoadingProgress()
+      let result: { [key: string]: any }
       // 优先按TMDBID精确查询
       if (keyword?.startsWith('tmdb:') || keyword?.startsWith('douban:') || keyword?.startsWith('bangumi:')) {
-        dataList.value = await api.get(`search/media/${keyword}`, {
+        result = await api.get(`search/media/${keyword}`, {
           params: {
             mtype: type,
             area,
+            season,
+          },
+        })
+      } else {
+        // 按标题模糊查询
+        result = await api.get(`search/title`, {
+          params: {
+            keyword,
           },
         })
       }
-      else {
-        // 按标题模糊查询
-        dataList.value = await api.get(`search/title/${keyword}`)
+      if (result && result.success) {
+        dataList.value = result.data
+      } else if (result && result.message) {
+        errorDescription.value = result.message
       }
       stopLoadingProgress()
+      // 从浏览器历史中删除当前搜索
+      window.history.replaceState(null, '', window.location.pathname)
     }
     // 标记已刷新
     isRefreshed.value = true
-  }
-  catch (error) {
+  } catch (error) {
     console.error(error)
     return Promise.reject(error)
   }
@@ -102,49 +128,46 @@ async function fetchData() {
 onMounted(() => {
   fetchData()
 })
+
+// 卸载时停止加载进度
+onUnmounted(() => {
+  stopLoadingProgress()
+})
 </script>
 
 <template>
-  <div v-if="!isRefreshed" class="mt-12 w-full text-center text-gray-500 text-sm flex flex-col items-center">
-    <VProgressCircular v-if="!keyword" size="48" indeterminate color="primary" />
-    <VProgressCircular v-if="keyword" class="mb-3" color="primary" :model-value="progressValue" size="64" />
-    <span>{{ progressText }}</span>
-  </div>
+  <LoadingBanner v-if="!isRefreshed" class="mt-12" :text="progressText" :progress="progressValue" />
   <NoDataFound
     v-if="dataList.length === 0 && isRefreshed"
-    error-code="404"
-    error-title="没有资源"
-    error-description="没有搜索到符合条件的资源。"
+    :error-title="errorTitle"
+    :error-description="errorDescription"
   />
   <div v-if="dataList.length > 0">
-    <TorrentRowListView
-      v-if="viewType === 'list'"
-      :items="dataList"
-    />
-    <TorrentCardListView
-      v-else
-      :items="dataList"
-    />
+    <TorrentRowListView v-if="viewType === 'list'" :items="dataList" />
+    <TorrentCardListView v-else :items="dataList" />
   </div>
   <!-- 视图切换 -->
   <VFab
     v-if="viewType === 'list'"
+    class="mb-12"
     icon="mdi-view-grid"
-    location="bottom end"
+    location="bottom"
     size="x-large"
-    fixed
+    absolute
     app
     appear
     @click="setViewType('card')"
+    :class="{ 'mb-12': appMode }"
   />
   <VFab
     v-else
     icon="mdi-view-list"
-    location="bottom end"
+    location="bottom"
     size="x-large"
     fixed
     app
     appear
     @click="setViewType('list')"
+    :class="{ 'mb-12': appMode }"
   />
 </template>

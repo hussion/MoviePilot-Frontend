@@ -2,7 +2,6 @@
 import _ from 'lodash'
 import type { Context } from '@/api/types'
 import TorrentCard from '@/components/cards/TorrentCard.vue'
-import { useDefer } from '@/@core/utils/dom'
 
 interface SearchTorrent extends Context {
   more?: Array<Context>
@@ -47,8 +46,10 @@ const editionFilterOptions = ref<Array<string>>([])
 // 获取分辨率过滤选项
 const resolutionFilterOptions = ref<Array<string>>([])
 
-// 数据列表
-const dataList = ref<Array<SearchTorrent>>([])
+// 完整的数据列表
+let dataList: SearchTorrent[]
+// 显示用的数据列表
+const displayDataList = ref<Array<SearchTorrent>>([])
 
 // 分组后的数据列表
 const groupedDataList = ref<Map<string, Context[]>>()
@@ -71,8 +72,35 @@ function initOptions(data: Context) {
 // 对季过滤选项进行排序
 const sortSeasonFilterOptions = computed(() => {
   return seasonFilterOptions.value.sort((a, b) => {
-    // 按字符串升序排序
-    return a.localeCompare(b, 'zh-Hans-CN', { sensitivity: 'accent' })
+    // 按季,集降序排序
+    const parseSeasonEpisode = (str: string) => {
+      const seasonRangeMatch = str.match(/S(\d+)(?:-S(\d+))?/)
+      const episodeRangeMatch = str.match(/E(\d+)(?:-E(\d+))?/)
+      return {
+        seasonStart: seasonRangeMatch?.[1] ? parseInt(seasonRangeMatch[1]) : 0,
+        seasonEnd: seasonRangeMatch?.[2] ? parseInt(seasonRangeMatch[2]) : 0,
+        episodeStart: episodeRangeMatch?.[1] ? parseInt(episodeRangeMatch[1]) : 0,
+        episodeEnd: episodeRangeMatch?.[2] ? parseInt(episodeRangeMatch[2]) : 0,
+      }
+    }
+    const parsedA = parseSeasonEpisode(a)
+    const parsedB = parseSeasonEpisode(b)
+    // 先按季降序排序
+    if (parsedB.seasonStart !== parsedA.seasonStart) {
+      return parsedB.seasonStart - parsedA.seasonStart
+    }
+    if (parsedB.seasonEnd !== parsedA.seasonEnd) {
+      return parsedB.seasonEnd - parsedA.seasonEnd
+    }
+    // 按集降序排序
+    if (parsedB.episodeStart !== parsedA.episodeStart) {
+      return parsedB.episodeStart - parsedA.episodeStart
+    }
+    if (parsedB.episodeEnd !== parsedA.episodeEnd) {
+      return parsedB.episodeEnd - parsedA.episodeEnd
+    }
+    // 兜底
+    return b.localeCompare(a)
   })
 })
 
@@ -81,7 +109,7 @@ onMounted(() => {
   // 数据分组
   const groupMap = new Map<string, Context[]>()
   // 遍历数据
-  props.items?.forEach((item) => {
+  props.items?.forEach(item => {
     const { torrent_info } = item
     // init options
     initOptions(item)
@@ -91,58 +119,68 @@ onMounted(() => {
       // 已入库相同标题和大小的分组，将当前上下文信息添加到分组中
       const group = groupMap.get(key)
       group?.push(item)
-    }
-    else {
+    } else {
       // 创建新的分组，并将当前上下文信息添加到分组中
       groupMap.set(key, [item])
     }
   })
   groupedDataList.value = groupMap
+
 })
 
-let defer = (_: number) => true
-
-// 计算过滤后的列表
-watchEffect(() => {
+// 只监听filterForm和groupedDataList的变化。因为displayDataList的变化不需要清空列表
+watch([filterForm, groupedDataList], filterData)
+function filterData() {
   // 清空列表
-  dataList.value = []
-  // 匹配过滤函数
+  dataList = []
+  displayDataList.value = []
+  // 匹配过滤函数，filter中有任一值包含value则返回true
   const match = (filter: Array<string>, value: string | undefined) =>
     filter.length === 0 || (value && filter.includes(value))
 
-  groupedDataList.value?.forEach((value) => {
+  groupedDataList.value?.forEach(value => {
     if (value.length > 0) {
-      const matchData = value.filter((data) => {
+      const matchData = value.filter(data => {
         const { meta_info, torrent_info } = data
         // 季、制作组、视频编码
         return (
           // 站点过滤
-          match(filterForm.site, torrent_info.site_name)
+          match(filterForm.site, torrent_info.site_name) &&
           // 促销状态过滤
-          && match(filterForm.freeState, torrent_info.volume_factor)
+          match(filterForm.freeState, torrent_info.volume_factor) &&
           // 季过滤
-          && match(filterForm.season, meta_info.season_episode)
+          match(filterForm.season, meta_info.season_episode) &&
           // 制作组过滤
-          && match(filterForm.releaseGroup, meta_info.resource_team)
+          match(filterForm.releaseGroup, meta_info.resource_team) &&
           // 视频编码过滤
-          && match(filterForm.videoCode, meta_info.video_encode)
+          match(filterForm.videoCode, meta_info.video_encode) &&
           // 分辨率过滤
-          && match(filterForm.resolution, meta_info.resource_pix)
+          match(filterForm.resolution, meta_info.resource_pix) &&
           // 质量过滤
-          && match(filterForm.edition, meta_info.edition)
+          match(filterForm.edition, meta_info.edition)
         )
       })
       if (matchData.length > 0) {
         const firstData = _.cloneDeepWith(matchData[0]) as SearchTorrent
-        if (matchData.length > 1)
-          firstData.more = matchData.slice(1)
+        if (matchData.length > 1) firstData.more = matchData.slice(1)
 
-        dataList.value.push(firstData)
+        // 显示前20个，4行左右。
+        if (displayDataList.value.length < 20) {
+          displayDataList.value.push(firstData)
+        } else {
+          // 后续内容不显示，存在list里。loadMore的时候再加载。
+          dataList.push(firstData)
+        }
       }
     }
   })
-  defer = useDefer(dataList.value.length)
-})
+}
+
+function loadMore({ done }: { done: any }) {
+  const itemsToMove = dataList.splice(0, 20) // 从 dataList 中获取最前面的 20 个元素
+  displayDataList.value.push(...itemsToMove)
+  done('ok')
+}
 </script>
 
 <template>
@@ -227,16 +265,12 @@ watchEffect(() => {
       </VCol>
     </VRow>
   </VCard>
-  <div class="grid gap-3 grid-torrent-card items-start">
-    <div v-for="(item, index) in dataList" :key="`${index}_${item.torrent_info.title}_${item.torrent_info.site}`">
-      <TorrentCard v-if="defer(index)" :torrent="item" :more="item.more" />
-    </div>
-  </div>
+      <VInfiniteScroll mode="intersect" side="end" :items="displayDataList" class="overflow-hidden"
+                       @load="loadMore">
+        <template #loading />
+        <template #empty />
+        <div class="grid gap-3 grid-torrent-card items-start">
+          <TorrentCard v-for="item in displayDataList"  :key="`${item.torrent_info.page_url}`" :torrent="item" :more="item.more" />
+        </div>
+      </VInfiniteScroll>
 </template>
-
-<style lang="scss">
-.grid-torrent-card {
-  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
-  padding-block-end: 1rem;
-}
-</style>

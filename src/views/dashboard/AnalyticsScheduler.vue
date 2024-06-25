@@ -2,20 +2,31 @@
 import api from '@/api'
 import type { ScheduleInfo } from '@/api/types'
 
+// 输入参数
+const props = defineProps({
+  // 是否允许刷新数据
+  allowRefresh: {
+    type: Boolean,
+    default: true,
+  },
+})
+
 // 定时服务列表
 const schedulerList = ref<ScheduleInfo[]>([])
 
 // 定时器
-let refreshTimer: NodeJS.Timer | null = null
+let refreshTimer: NodeJS.Timeout | null = null
 
 // 调用API加载定时服务列表
 async function loadSchedulerList() {
+  if (!props.allowRefresh) {
+    return
+  }
   try {
     const res: ScheduleInfo[] = await api.get('dashboard/schedule')
 
     schedulerList.value = res
-  }
-  catch (e) {
+  } catch (e) {
     console.log(e)
   }
 }
@@ -39,55 +50,49 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <VCard>
-    <VCardItem>
-      <VCardTitle>后台任务</VCardTitle>
-    </VCardItem>
-
-    <VCardText>
-      <VList
-        class="card-list"
-        height="250"
-      >
-        <VListItem
-          v-for="item in schedulerList"
-          :key="item.id"
-        >
-          <template #prepend>
-            <VAvatar
-              size="40"
-              variant="tonal"
-              color=""
-              class="me-3"
-            >
-              {{ item.name[0] }}
-            </VAvatar>
-          </template>
-
-          <VListItemTitle class="mb-1">
-            <span class="text-sm font-weight-medium">{{ item.name }}</span>
-          </VListItemTitle>
-
-          <VListItemSubtitle class="text-xs">
-            {{ item.next_run }}
-          </VListItemSubtitle>
-
+  <VHover>
+    <template #default="hover">
+      <VCard v-bind="hover.props">
+        <VCardItem>
           <template #append>
-            <div>
-              <h4 class="font-weight-medium">
-                {{ item.status }}
-              </h4>
-            </div>
+            <VIcon class="cursor-move" v-if="hover.isHovering">mdi-drag</VIcon>
           </template>
-        </VListItem>
-        <VListItem v-if="schedulerList.length === 0">
-          <VListItemTitle class="text-center">
-            没有后台服务
-          </VListItemTitle>
-        </VListItem>
-      </VList>
-    </VCardText>
-  </VCard>
+          <VCardTitle>后台任务</VCardTitle>
+        </VCardItem>
+
+        <VCardText>
+          <VList class="card-list" height="250">
+            <VListItem v-for="item in schedulerList" :key="item.id">
+              <template #prepend>
+                <VAvatar size="40" variant="tonal" color="" class="me-3">
+                  {{ item.name[0] }}
+                </VAvatar>
+              </template>
+
+              <VListItemTitle class="mb-1">
+                <span class="text-sm font-weight-medium">{{ item.name }}</span>
+              </VListItemTitle>
+
+              <VListItemSubtitle class="text-xs">
+                {{ item.next_run }}
+              </VListItemSubtitle>
+
+              <template #append>
+                <div>
+                  <h4 class="font-weight-medium">
+                    {{ item.status }}
+                  </h4>
+                </div>
+              </template>
+            </VListItem>
+            <VListItem v-if="schedulerList.length === 0">
+              <VListItemTitle class="text-center"> 没有后台服务 </VListItemTitle>
+            </VListItem>
+          </VList>
+        </VCardText>
+      </VCard>
+    </template>
+  </VHover>
 </template>
 
 <style lang="scss" scoped>

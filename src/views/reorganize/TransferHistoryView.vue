@@ -1,13 +1,27 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { debounce } from 'lodash'
 import { useToast } from 'vue-toast-notification'
 import api from '@/api'
 import type { TransferHistory } from '@/api/types'
-import ReorganizeForm from '@/components/form/ReorganizeForm.vue'
-import { fixArrayAt } from '@/@core/utils/compatibility'
+import ReorganizeDialog from '@/components/dialog/ReorganizeDialog.vue'
+import ProgressDialog from '@/components/dialog/ProgressDialog.vue'
+import { useRoute } from 'vue-router'
+import router from '@/router'
+import { useDisplay } from 'vuetify'
+
+// 显示器宽度
+const display = useDisplay()
+
+// APP
+const appMode = computed(() => {
+  return localStorage.getItem('MP_APPMODE') != '0' && display.mdAndDown.value
+})
 
 // 提示框
 const $toast = useToast()
+
+// 路由
+const route = useRoute()
 
 // 重新整理对话框
 const redoDialog = ref(false)
@@ -18,9 +32,6 @@ const currentHistory = ref<TransferHistory>()
 // 重新整理IDS
 const redoIds = ref<number[]>([])
 
-// 重新整理target
-const redoTarget = ref('')
-
 // 已选中的数据
 const selected = ref<TransferHistory[]>([])
 
@@ -29,27 +40,27 @@ const headers = [
   {
     title: '标题',
     key: 'title',
-    sortable: false,
+    sortable: true,
   },
   {
     title: '目录',
     key: 'src',
-    sortable: false,
+    sortable: true,
   },
   {
     title: '转移方式',
     key: 'mode',
-    sortable: false,
+    sortable: true,
   },
   {
     title: '时间',
     key: 'date',
-    sortable: false,
+    sortable: true,
   },
   {
     title: '状态',
     key: 'status',
-    sortable: false,
+    sortable: true,
   },
   {
     title: '',
@@ -58,11 +69,20 @@ const headers = [
   },
 ]
 
+const pageRange = [
+  { title: '25', value: 25 },
+  { title: '50', value: 50 },
+  { title: '100', value: 100 },
+  { title: '500', value: 500 },
+  { title: '1000', value: 1000 },
+  { title: 'All', value: -1 },
+]
+
 // 数据列表
 const dataList = ref<TransferHistory[]>([])
 
 // 搜索
-const search = ref()
+const search = ref(route.query.search as string)
 
 // 搜索提示词列表
 const searchHintList = ref<string[]>([])
@@ -74,10 +94,10 @@ const loading = ref(false)
 const totalItems = ref(0)
 
 // 每页条数
-const itemsPerPage = ref(50)
+const itemsPerPage = ref<number>(ensureNumber(route.query.itemsPerPage, 50))
 
 // 当前页码
-const currentPage = ref(1)
+const currentPage = ref<number>(ensureNumber(route.query.currentPage, 1))
 
 // 进度条
 const progressDialog = ref(false)
@@ -94,42 +114,6 @@ const deleteConfirmDialog = ref(false)
 // 确认框标题
 const confirmTitle = ref('')
 
-// 获取订阅列表数据
-async function fetchData({ page, itemsPerPage }: { page: number; itemsPerPage: number }) {
-  loading.value = true
-  try {
-    currentPage.value = page
-
-    const result: { [key: string]: any } = await api.get('history/transfer', {
-      params: {
-        page,
-        count: itemsPerPage,
-        title: search.value,
-      },
-    })
-
-    dataList.value = result.data.list
-    totalItems.value = result.data.total
-    searchHintList.value = ['失败', '成功', ...new Set(dataList.value.map(item => item.title || ''))].filter(
-      title => title !== '',
-    )
-  }
-  catch (error) {
-    console.error(error)
-  }
-  loading.value = false
-}
-
-// 根据 type 返回不同的图标
-function getIcon(type: string) {
-  if (type === '电影')
-    return 'mdi-movie'
-  else if (type === '电视剧')
-    return 'mdi-television-classic'
-  else
-    return 'mdi-help-circle'
-}
-
 // 转移方式字典
 const TransferDict: { [key: string]: string } = {
   copy: '复制',
@@ -138,6 +122,61 @@ const TransferDict: { [key: string]: string } = {
   softlink: '软链接',
   rclone_copy: 'Rclone复制',
   rclone_move: 'Rclone移动',
+}
+
+// 分页提示
+const pageTip = computed(() => {
+  const begin = itemsPerPage.value * (currentPage.value - 1) + 1
+  const end = itemsPerPage.value * currentPage.value === -1 ? 'ALL' : itemsPerPage.value * currentPage.value
+  return {
+    begin,
+    end,
+  }
+})
+
+// 分页总数
+const totalPage = computed(() => {
+  const total = Math.ceil(totalItems.value / itemsPerPage.value)
+  return total
+})
+
+// 切换页签和搜索词
+watch(
+  [() => currentPage.value, () => itemsPerPage.value, () => search.value],
+  debounce(async () => {
+    reloadPage()
+  }, 1000),
+)
+
+// 获取订阅列表数据
+async function fetchData(page = currentPage.value, count = itemsPerPage.value) {
+  loading.value = true
+
+  try {
+    const result: { [key: string]: any } = await api.get('history/transfer', {
+      params: {
+        page,
+        count,
+        title: search.value,
+      },
+    })
+
+    dataList.value = result.data?.list
+    totalItems.value = result.data?.total
+    searchHintList.value = ['失败', '成功', ...new Set(dataList.value.map(item => item.title || ''))].filter(
+      title => title !== '',
+    )
+  } catch (error) {
+    console.error(error)
+  }
+  loading.value = false
+}
+
+// 根据 type 返回不同的图标
+function getIcon(type: string) {
+  if (type === '电影') return 'mdi-movie'
+  else if (type === '电视剧') return 'mdi-television-classic'
+  else return 'mdi-help-circle'
 }
 
 // 删除历史记录
@@ -157,10 +196,8 @@ async function remove(item: TransferHistory, deleteSrc: boolean, deleteDest: boo
       data: item,
     })
 
-    if (!result.success)
-      $toast.error(`删除失败: ${result.msg}`)
-  }
-  catch (error) {
+    if (!result.success) $toast.error(`删除失败: ${result.msg}`)
+  } catch (error) {
     console.error(error)
   }
 }
@@ -169,16 +206,12 @@ async function remove(item: TransferHistory, deleteSrc: boolean, deleteDest: boo
 async function removeSingle(deleteSrc: boolean, deleteDest: boolean) {
   // 关闭弹窗
   deleteConfirmDialog.value = false
-  if (!currentHistory.value)
-    return
+  if (!currentHistory.value) return
 
   // 删除
   await remove(currentHistory.value, deleteSrc, deleteDest)
   // 刷新
-  fetchData({
-    page: currentPage.value,
-    itemsPerPage: itemsPerPage.value,
-  })
+  fetchData()
 }
 
 // 批量删除记录
@@ -187,8 +220,7 @@ async function removeBatch(deleteSrc: boolean, deleteDest: boolean) {
   deleteConfirmDialog.value = false
   // 总条数
   const total = selected.value.length
-  if (total === 0)
-    return
+  if (total === 0) return
 
   // 已处理条数
   let handled = 0
@@ -208,24 +240,18 @@ async function removeBatch(deleteSrc: boolean, deleteDest: boolean) {
   // 隐藏进度条
   progressDialog.value = false
   // 重新获取数据
-  fetchData({
-    page: currentPage.value,
-    itemsPerPage: itemsPerPage.value,
-  })
+  fetchData()
 }
 
 // 响应删除操作
 async function deleteConfirmHandler(deleteSrc: boolean, deleteDest: boolean) {
-  if (currentHistory.value)
-    await removeSingle(deleteSrc, deleteDest)
-  else
-    await removeBatch(deleteSrc, deleteDest)
+  if (currentHistory.value) await removeSingle(deleteSrc, deleteDest)
+  else await removeBatch(deleteSrc, deleteDest)
 }
 
 // 批量删除历史记录
 async function removeHistoryBatch() {
-  if (selected.value.length === 0)
-    return
+  if (selected.value.length === 0) return
 
   // 清空当前操作记录
   currentHistory.value = undefined
@@ -236,47 +262,37 @@ async function removeHistoryBatch() {
 
 // 计算根路径
 function getRootPath(path: string, type: string, category: string) {
-  if (!path)
-    return ''
+  if (!path) return ''
 
   let index = -2
-  if (type !== '电影')
-    index = -3
+  if (type !== '电影') index = -3
 
-  if (category)
-    index -= 1
+  if (category) index -= 1
 
-  if (path.includes('/'))
-    return path.split('/').slice(0, index).join('/')
-  else
-    return path.split('\\').slice(0, index).join('\\')
+  if (path.includes('/')) return path.split('/').slice(0, index).join('/')
+  else return path.split('\\').slice(0, index).join('\\')
 }
 
 // 批量重新整理
 async function retransferBatch() {
-  if (selected.value.length === 0)
-    return
+  if (selected.value.length === 0) return
 
   // 清空当前操作记录
   currentHistory.value = undefined
   // 重新整理IDS
   redoIds.value = selected.value.map(item => item.id)
-  // 重新整理target
-  if (selected.value.length === 1) {
-    // 目的目录
-    const dest = selected.value[0].dest ?? ''
-    // 类型
-    const mediaType = selected.value[0].type ?? ''
-    // 分类
-    const category = selected.value[0].category ?? ''
-    // 计算根路径
-    redoTarget.value = getRootPath(dest, mediaType, category)
-  }
-  else {
-    redoTarget.value = ''
-  }
   // 打开识别弹窗
   redoDialog.value = true
+}
+
+// 整理完成
+function transferDone() {
+  redoDialog.value = false
+  // 清空当前操作记录
+  currentHistory.value = undefined
+  selected.value = []
+  // 刷新
+  fetchData()
 }
 
 // 弹出菜单
@@ -288,7 +304,6 @@ const dropdownItems = ref([
       prependIcon: 'mdi-redo-variant',
       click: (item: TransferHistory) => {
         redoIds.value = [item.id]
-        redoTarget.value = getRootPath(item.dest ?? '', item.type ?? '', item.category ?? '')
         redoDialog.value = true
       },
     },
@@ -306,27 +321,57 @@ const dropdownItems = ref([
   },
 ])
 
-// 修复低版本Safari等浏览器数组不支持at函数的问题
-fixArrayAt()
+// 添加url参数
+function addUrlQuery(url: string, name: string, value: any) {
+  if (!url || !name || !value) return url
+  const separator = url.includes('?') ? '&' : '?'
+  return url + separator + name + '=' + encodeURIComponent(value)
+}
+
+// 重载页面
+function reloadPage() {
+  let url = '/history'
+  if (search.value) {
+    url = addUrlQuery(url, 'search', search.value)
+  }
+  if (itemsPerPage.value) {
+    url = addUrlQuery(url, 'itemsPerPage', itemsPerPage.value)
+  }
+  if (currentPage.value) {
+    url = addUrlQuery(url, 'currentPage', currentPage.value)
+  }
+  router.push(url)
+}
+
+// 确保值为number类型
+function ensureNumber(value: any, defaultValue: number = 0) {
+  value = Number(value)
+  // 如果不是数字
+  if (Number.isNaN(value)) {
+    value = defaultValue
+  }
+  return value
+}
+
+// 初始加载数据
+onMounted(fetchData)
 </script>
 
 <template>
-  <VCard class="pb-5">
+  <VCard>
     <VCardItem>
       <VCardTitle>
         <VRow>
-          <VCol cols="4" md="6">
-            历史记录
-          </VCol>
-          <VCol cols="8" md="6">
+          <VCol cols="4" md="6"> 历史记录 </VCol>
+          <VCol cols="8" md="6" class="flex">
             <VCombobox
               key="search_navbar"
               v-model="search"
               :items="searchHintList"
               class="text-disabled"
               density="compact"
-              label="搜索标题、状态"
-              append-inner-icon="mdi-magnify"
+              label="搜索目录、状态"
+              prepend-inner-icon="mdi-magnify"
               variant="solo-filled"
               single-line
               hide-details
@@ -338,24 +383,22 @@ fixArrayAt()
         </VRow>
       </VCardTitle>
     </VCardItem>
-    <VDataTableServer
+    <VDataTableVirtual
       v-model="selected"
-      v-model:items-per-page="itemsPerPage"
       :headers="headers"
       :items="dataList"
-      :items-length="totalItems"
-      :search="search"
       :loading="loading"
       density="compact"
-      item-value="id"
       return-object
       fixed-header
       show-select
-      items-per-page-text="每页条数"
-      page-text="{0}-{1} 共 {2} 条"
       loading-text="加载中..."
-      class="data-table-div"
-      @update:options="fetchData"
+      hover
+      :style="
+        appMode
+          ? 'height: calc(100vh - 15.5rem - env(safe-area-inset-bottom) - 3.5rem)'
+          : 'height: calc(100vh - 14.5rem - env(safe-area-inset-bottom)'
+      "
     >
       <template #item.title="{ item }">
         <div class="d-flex align-center">
@@ -363,15 +406,18 @@ fixArrayAt()
             <VIcon :icon="getIcon(item.type || '')" />
           </VAvatar>
           <div class="d-flex flex-column ms-1">
-            <span class="d-block text-high-emphasis">
+            <span v-if="item.type === '电视剧'" class="d-block text-high-emphasis min-w-20">
               {{ item?.title }} {{ item?.seasons }}{{ item?.episodes }}
+            </span>
+            <span v-else class="d-block text-high-emphasis min-w-20">
+              {{ item?.title }}
             </span>
             <small>{{ item?.category }}</small>
           </div>
         </div>
       </template>
       <template #item.src="{ item }">
-        <small>{{ item?.src }} <br>=> {{ item?.dest }}</small>
+        <small>{{ item?.src }} <br />=> {{ item?.dest }}</small>
       </template>
       <template #item.mode="{ item }">
         <VChip variant="outlined" color="primary" size="small">
@@ -379,16 +425,12 @@ fixArrayAt()
         </VChip>
       </template>
       <template #item.status="{ item }">
-        <VChip v-if="item?.status" color="success" size="small">
-          成功
-        </VChip>
-        <v-tooltip v-else :text="item?.errmsg">
+        <VChip v-if="item?.status" color="success" size="small"> 成功 </VChip>
+        <VTooltip v-else :text="item?.errmsg">
           <template #activator="{ props }">
-            <VChip v-bind="props" color="error" size="small">
-              失败
-            </VChip>
+            <VChip v-bind="props" color="error" size="small"> 失败 </VChip>
           </template>
-        </v-tooltip>
+        </VTooltip>
       </template>
       <template #item.date="{ item }">
         <small>{{ item?.date }}</small>
@@ -414,11 +456,50 @@ fixArrayAt()
           </VMenu>
         </IconBtn>
       </template>
-      <template #no-data>
-        没有数据
-      </template>
-    </VDataTableServer>
+      <template #no-data> 没有数据 </template>
+    </VDataTableVirtual>
+    <div class="flex items-center justify-end">
+      <div class="w-auto">
+        <VSelect v-model="itemsPerPage" :items="pageRange" density="compact" variant="solo" flat />
+      </div>
+      <div class="w-auto text-sm">{{ pageTip.begin }}-{{ pageTip.end }} / {{ totalItems }}</div>
+      <VPagination
+        v-model="currentPage"
+        show-first-last-page
+        :length="totalPage"
+        @next="currentPage + 1"
+        @prev="currentPage - 1"
+      >
+      </VPagination>
+    </div>
   </VCard>
+
+  <!-- 底部操作按钮 -->
+  <span>
+    <VFab
+      v-if="selected.length > 0"
+      icon="mdi-trash-can-outline"
+      color="error"
+      location="bottom"
+      size="x-large"
+      fixed
+      app
+      appear
+      @click="removeHistoryBatch"
+      :class="{ 'mb-12': appMode }"
+    />
+    <VFab
+      v-if="selected.length > 0"
+      :class="appMode ? 'mb-28' : 'mb-16'"
+      icon="mdi-redo-variant"
+      location="bottom"
+      size="x-large"
+      fixed
+      app
+      appear
+      @click="retransferBatch"
+    />
+  </span>
   <!-- 底部弹窗 -->
   <VBottomSheet v-model="deleteConfirmDialog" inset>
     <VCard class="text-center rounded-t">
@@ -427,12 +508,8 @@ fixArrayAt()
         {{ confirmTitle }}
       </VCardTitle>
       <div class="d-flex flex-column flex-lg-row justify-center my-3">
-        <VBtn color="primary" class="mb-2 mx-2" @click="deleteConfirmHandler(false, false)">
-          仅删除历史记录
-        </VBtn>
-        <VBtn color="warning" class="mb-2 mx-2" @click="deleteConfirmHandler(true, false)">
-          删除历史记录和源文件
-        </VBtn>
+        <VBtn color="primary" class="mb-2 mx-2" @click="deleteConfirmHandler(false, false)"> 仅删除历史记录 </VBtn>
+        <VBtn color="warning" class="mb-2 mx-2" @click="deleteConfirmHandler(true, false)"> 删除历史记录和源文件 </VBtn>
         <VBtn color="info" class="mb-2 mx-2" @click="deleteConfirmHandler(false, true)">
           删除历史记录和媒体库文件
         </VBtn>
@@ -442,58 +519,20 @@ fixArrayAt()
       </div>
     </VCard>
   </VBottomSheet>
+  <!-- 进度框 -->
+  <ProgressDialog v-if="progressDialog" v-model="progressDialog" :text="progressText" :value="progressValue" />
   <!-- 文件整理弹窗 -->
-  <ReorganizeForm
+  <ReorganizeDialog
+    v-if="redoDialog"
     v-model="redoDialog"
     :logids="redoIds"
-    :target="redoTarget"
-    @done="
-      () => {
-        redoDialog = false
-        // 清空当前操作记录
-        currentHistory = undefined
-        selected = []
-        // 刷新
-        fetchData({
-          page: currentPage,
-          itemsPerPage,
-        })
-      }
-    "
+    @done="transferDone"
     @close="redoDialog = false"
   />
-  <!-- 底部操作按钮 -->
-  <span>
-    <VFab
-      v-if="selected.length > 0"
-      icon="mdi-trash-can-outline"
-      color="error"
-      location="bottom end"
-      size="x-large"
-      fixed
-      app
-      appear
-      @click="removeHistoryBatch"
-    />
-    <VFab
-      v-if="selected.length > 0"
-      class="mb-2"
-      icon="mdi-redo-variant"
-      location="bottom end"
-      size="x-large"
-      fixed
-      app
-      appear
-      @click="retransferBatch"
-    />
-  </span>
 </template>
 
 <style lang="scss">
 .v-table th {
   white-space: nowrap;
-}
-.data-table-div {
-  height: calc(100vh - 200px);
 }
 </style>

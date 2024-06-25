@@ -33,7 +33,10 @@ defineProps<{
   .nav-link a {
     display: flex;
     align-items: center;
+    border-radius: 0 3.125rem 3.125rem 0 !important;
     cursor: pointer;
+    margin-inline-end: 1.125em;
+    padding-inline: 1.375rem 1rem;
   }
 }
 </style>

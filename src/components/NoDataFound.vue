@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import image from '@images/misc/teamwork.png'
+import image from '@images/no-data.svg'
 
 const props = defineProps<Props>()
 
@@ -11,10 +11,7 @@ interface Props {
 </script>
 
 <template>
-  <VEmptyState
-    :image="image"
-    size="250"
-  >
+  <VEmptyState :image="image" size="250">
     <template #title>
       <div class="mt-8 text-2xl">
         {{ props.errorTitle }}
@@ -22,7 +19,7 @@ interface Props {
     </template>
 
     <template #text>
-      <div class="text-subtitle">
+      <div class="text-subtitle mt-3">
         {{ props.errorDescription }}
       </div>
     </template>

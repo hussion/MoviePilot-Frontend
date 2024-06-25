@@ -1,9 +1,12 @@
 <script lang="ts" setup>
 import { useToast } from 'vue-toast-notification'
+import VersionHistory from '../misc/VersionHistory.vue'
 import api from '@/api'
 import type { Plugin } from '@/api/types'
 import noImage from '@images/logos/plugin.png'
 import { getDominantColor } from '@/@core/utils/image'
+import { isNullOrEmptyObject } from '@/@core/utils'
+import ProgressDialog from '@/components/dialog/ProgressDialog.vue'
 
 // 输入参数
 const props = defineProps({
@@ -37,6 +40,15 @@ const isImageLoaded = ref(false)
 // 图片是否加载失败
 const imageLoadError = ref(false)
 
+// 更新日志弹窗
+const releaseDialog = ref(false)
+
+// 计算插件标签
+const pluginLabels = computed(() => {
+  if (!props.plugin?.plugin_label) return []
+  return props.plugin.plugin_label.split(',')
+})
+
 // 图片加载完成
 async function imageLoaded() {
   isImageLoaded.value = true
@@ -52,15 +64,12 @@ async function installPlugin() {
     progressDialog.value = true
     progressText.value = `正在安装 ${props.plugin?.plugin_name} v${props?.plugin?.plugin_version} ...`
 
-    const result: { [key: string]: any } = await api.get(
-      `plugin/install/${props.plugin?.id}`,
-      {
-        params: {
-          repo_url: props.plugin?.repo_url,
-          force: props.plugin?.has_update,
-        },
+    const result: { [key: string]: any } = await api.get(`plugin/install/${props.plugin?.id}`, {
+      params: {
+        repo_url: props.plugin?.repo_url,
+        force: props.plugin?.has_update,
       },
-    )
+    })
 
     // 隐藏等待提示框
     progressDialog.value = false
@@ -70,23 +79,20 @@ async function installPlugin() {
 
       // 通知父组件刷新
       emit('install')
-    }
-    else {
+    } else {
       $toast.error(`插件 ${props.plugin?.plugin_name} 安装失败：${result.message}`)
     }
-  }
-  catch (error) {
+  } catch (error) {
     console.error(error)
   }
 }
 
 // 计算图标路径
 const iconPath: Ref<string> = computed(() => {
-  if (imageLoadError.value)
-    return noImage
+  if (imageLoadError.value) return noImage
   // 如果是网络图片则使用代理后返回
   if (props.plugin?.plugin_icon?.startsWith('http'))
-    return `${import.meta.env.VITE_API_BASE_URL}system/img/${encodeURIComponent(props.plugin?.plugin_icon)}/1`
+    return `${import.meta.env.VITE_API_BASE_URL}system/img/1?imgurl=${encodeURIComponent(props.plugin?.plugin_icon)}`
 
   return `./plugin_icon/${props.plugin?.plugin_icon}`
 })
@@ -97,60 +103,62 @@ function visitPluginPage() {
   let repoUrl = props.plugin?.repo_url
   if (repoUrl) {
     if (repoUrl.includes('raw.githubusercontent.com')) {
-      if (!repoUrl.endsWith('/'))
-        repoUrl += '/'
+      if (!repoUrl.endsWith('/')) repoUrl += '/'
 
-      if (repoUrl.split('/').length < 6)
-        repoUrl = `${repoUrl}main/`
+      if (repoUrl.split('/').length < 6) repoUrl = `${repoUrl}main/`
 
       try {
         const [user, repo] = repoUrl.split('/').slice(-4, -2)
         repoUrl = `https://github.com/${user}/${repo}`
-      }
-      catch (error) {
+      } catch (error) {
         return
       }
     }
-  }
-  else {
+  } else {
     repoUrl = props.plugin?.author_url
   }
   window.open(repoUrl, '_blank')
 }
 
+// 显示更新日志
+function showUpdateHistory() {
+  releaseDialog.value = true
+}
+
 // 弹出菜单
 const dropdownItems = ref([
   {
-    title: '查看详情',
+    title: '项目主页',
     value: 1,
+    show: true,
     props: {
-      prependIcon: 'mdi-information-outline',
+      prependIcon: 'mdi-github',
       click: visitPluginPage,
+    },
+  },
+  {
+    title: '更新说明',
+    value: 2,
+    show: !isNullOrEmptyObject(props.plugin?.history || {}),
+    props: {
+      prependIcon: 'mdi-update',
+      click: showUpdateHistory,
     },
   },
 ])
 </script>
 
 <template>
-  <VCard
-    :width="props.width"
-    :height="props.height"
-    @click="installPlugin"
-  >
-    <div
-      class="relative pa-4 text-center card-cover-blurred"
-      :style="{ background: `${backgroundColor}` }"
-    >
+  <VCard :width="props.width" :height="props.height" @click="installPlugin" class="flex flex-col">
+    <div class="relative pa-3 text-center card-cover-blurred" :style="{ background: `${backgroundColor}` }">
       <div class="me-n3 absolute top-0 right-3">
         <IconBtn>
           <VIcon icon="mdi-dots-vertical" class="text-white" />
-          <VMenu
-            activator="parent"
-            close-on-content-click
-          >
+          <VMenu activator="parent" close-on-content-click>
             <VList>
               <VListItem
                 v-for="(item, i) in dropdownItems"
+                v-show="item.show"
                 :key="i"
                 variant="plain"
                 @click="item.props.click"
@@ -164,9 +172,7 @@ const dropdownItems = ref([
           </VMenu>
         </IconBtn>
       </div>
-      <VAvatar
-        size="8rem"
-      >
+      <VAvatar size="6rem">
         <VImg
           ref="imageRef"
           :src="iconPath"
@@ -183,16 +189,17 @@ const dropdownItems = ref([
       <span class="text-sm text-gray-500">v{{ props.plugin?.plugin_version }}</span>
     </VCardTitle>
     <VCardText class="pb-2">
-      {{ props.plugin?.plugin_desc }}
+      <div>{{ props.plugin?.plugin_desc }}</div>
+      <div>
+        <VChip v-for="label in pluginLabels" variant="tonal" size="small" class="me-1 my-1" color="info" label>
+          {{ label }}
+        </VChip>
+      </div>
     </VCardText>
-    <VCardText class="flex items-center justify-start pb-2">
+    <VCardText class="flex align-self-baseline pb-2 w-full align-end">
       <span>
         <VIcon icon="mdi-account" class="me-1" />
-        <a
-          :href="props.plugin?.author_url"
-          target="_blank"
-          @click.stop
-        >
+        <a :href="props.plugin?.author_url" target="_blank" @click.stop>
           {{ props.plugin?.plugin_author }}
         </a>
       </span>
@@ -203,22 +210,13 @@ const dropdownItems = ref([
     </VCardText>
   </VCard>
   <!-- 安装插件进度框 -->
-  <VDialog
-    v-model="progressDialog"
-    :scrim="false"
-    width="25rem"
-  >
-    <VCard
-      color="primary"
-    >
-      <VCardText class="text-center">
-        {{ progressText }}
-        <VProgressLinear
-          indeterminate
-          color="white"
-          class="mb-0 mt-1"
-        />
-      </VCardText>
+  <ProgressDialog v-if="progressDialog" v-model="progressDialog" :text="progressText" />
+  <!-- 更新日志 -->
+  <VDialog v-if="releaseDialog" v-model="releaseDialog" width="600" scrollable>
+    <VCard :title="`${props.plugin?.plugin_name} 更新说明`">
+      <DialogCloseBtn @click="releaseDialog = false" />
+      <VDivider />
+      <VersionHistory :history="props.plugin?.history" />
     </VCard>
   </VDialog>
 </template>
@@ -230,7 +228,7 @@ const dropdownItems = ref([
   -webkit-backdrop-filter: blur(2px);
   backdrop-filter: blur(2px);
   background: rgba(29, 39, 59, 48%);
-  content: "";
+  content: '';
   inset: 0;
 }
 </style>
